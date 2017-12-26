@@ -4,7 +4,7 @@ apt-mark unhold nginx-common
 apt-mark unhold nginx-extras
 apt-get -y update 2>&1 | tee $BUILD_LOG
 apt-get -y install nginx-extras build-essential libpcre3-dev libssl-dev libgeoip-dev libpq-dev libxslt1-dev libgd2-xpm-dev 2>&1 | tee -a $BUILD_LOG
-cd /home/openresty/service_status/v2.0/config/openresty-1.11.2.2
+cd openresty-1.13.6.1
 ./configure \
 --sbin-path=/usr/sbin/nginx \
 --conf-path=/etc/nginx/nginx.conf \
@@ -41,7 +41,6 @@ cd /home/openresty/service_status/v2.0/config/openresty-1.11.2.2
 --with-ipv6 \
 --with-http_postgres_module \
 --add-module=bundle/nginx-sticky-module-ng \
---add-module=bundle/stream-lua-nginx-module \
 --add-module=bundle/ngx_lua_ipc 2>&1 | tee -a $BUILD_LOG
 make 2>&1 | tee -a $BUILD_LOG
 make install 2>&1 | tee -a $BUILD_LOG
