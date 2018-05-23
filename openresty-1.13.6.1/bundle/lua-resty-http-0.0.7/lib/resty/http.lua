@@ -470,7 +470,8 @@ local function _read_no_body()
 end
 
 local function _read_body_chunked(sock)
-    return function(sock)
+    local socket = sock;
+    return function()
         local length
         
         local chunks = {}
@@ -479,7 +480,7 @@ local function _read_body_chunked(sock)
         repeat
             
             -- Receive the chunk size
-            local str, err = sock:receive("*l")
+            local str, err = socket:receive("*l")
             if not str then
                 return nil, err
             end
@@ -491,7 +492,7 @@ local function _read_body_chunked(sock)
             end
 
             if length > 0 then
-                local str, err = sock:receive(length)
+                local str, err = socket:receive(length)
                 if not str then
                     return nil, err
                 end
@@ -500,10 +501,10 @@ local function _read_body_chunked(sock)
                 c = c + 1
 
                 -- If we're finished with this chunk, read the carriage return.
-                sock:receive(2) -- read \r\n
+                socket:receive(2) -- read \r\n
             else
                 -- Read the last (zero length) chunk's carriage return
-                sock:receive(2) -- read \r\n
+                socket:receive(2) -- read \r\n
             end
 
         until length == 0
@@ -513,15 +514,17 @@ local function _read_body_chunked(sock)
 end
 
 local function _read_body_simple(sock, length)
-    return function(sock, content_length)
+    local socket = sock;
+    local content_length = length;
+    return function()
         if not content_length then
             -- We have no length but don't wish to stream.
             -- HTTP 1.0 with no length will close connection, so read to the end.
-            return sock:receive("*a");
+            return socket:receive("*a");
 
         else
             -- We have a length and potentially keep-alive, but want everything.
-            return sock:receive(content_length);
+            return socket:receive(content_length);
 
         end    
     end
