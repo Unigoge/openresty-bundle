@@ -465,6 +465,67 @@ local function _no_body_reader()
     return nil
 end
 
+local function _read_no_body()
+    return "";
+end
+
+local function _read_body_chunked(sock)
+    return function(sock)
+        local length
+        
+        local chunks = {}
+        local c = 1
+        
+        repeat
+            
+            -- Receive the chunk size
+            local str, err = sock:receive("*l")
+            if not str then
+                return nil, err
+            end
+
+            length = tonumber(str, 16)
+
+            if not length then
+                return nil, "unable to read chunksize"
+            end
+
+            if length > 0 then
+                local str, err = sock:receive(length)
+                if not str then
+                    return nil, err
+                end
+
+                chunks[c] = str
+                c = c + 1
+
+                -- If we're finished with this chunk, read the carriage return.
+                sock:receive(2) -- read \r\n
+            else
+                -- Read the last (zero length) chunk's carriage return
+                sock:receive(2) -- read \r\n
+            end
+
+        until length == 0
+        
+        return tbl_concat(chunks)
+    end    
+end
+
+local function _read_body_simple(sock, length)
+    return function(sock, content_length)
+        if not content_length then
+            -- We have no length but don't wish to stream.
+            -- HTTP 1.0 with no length will close connection, so read to the end.
+            return sock:receive("*a");
+
+        else
+            -- We have a length and potentially keep-alive, but want everything.
+            return sock:receive(content_length);
+
+        end    
+    end
+end
 
 local function _read_body(res)
     local reader = res.body_reader
@@ -711,6 +772,88 @@ function _M.read_response(self, params)
     end
 end
 
+function _M.read_response_simple(self, params)
+    local sock = self.sock
+
+    local status, version, reason, err
+
+    -- If we expect: continue, we need to handle this, sending the body if allowed.
+    -- If we don't get 100 back, then status is the actual status.
+    if params.headers["Expect"] == "100-continue" then
+        local _status, _version, _err = _handle_continue(sock, params.body)
+        if not _status then
+            return nil, _err
+        elseif _status ~= 100 then
+            status, version, err = _status, _version, _err
+        end
+    end
+
+    -- Just read the status as normal.
+    if not status then
+        status, version, reason, err = _receive_status(sock)
+        if not status then
+            return nil, err
+        end
+    end
+
+
+    local res_headers, err = _receive_headers(sock)
+    if not res_headers then
+        return nil, err
+    end
+
+    -- keepalive is true by default. Determine if this is correct or not.
+    local ok, connection = pcall(str_lower, res_headers["Connection"])
+    if ok then
+        if  (version == 1.1 and connection == "close") or
+            (version == 1.0 and connection ~= "keep-alive") then
+            self.keepalive = false
+        end
+    else
+        -- no connection header
+        if version == 1.0 then
+            self.keepalive = false
+        end
+    end
+
+    local trailer_reader, err
+    local has_body = false
+
+    local read_body = _read_no_body;
+    -- Receive the body_reader
+    if _should_receive_body(params.method, status) then
+        local ok, encoding = pcall(str_lower, res_headers["Transfer-Encoding"])
+        if ok and version == 1.1 and encoding == "chunked" then
+            read_body = _read_body_chunked(sock);
+            has_body = true
+        else
+
+            local ok, length = pcall(tonumber, res_headers["Content-Length"])
+            if ok then
+                read_body = _read_body_simple(sock, length)
+                has_body = true
+            end
+        end
+    end
+
+    if res_headers["Trailer"] then
+        trailer_reader, err = _trailer_reader(sock)
+    end
+
+    if err then
+        return nil, err
+    else
+        return {
+            status = status,
+            reason = reason,
+            headers = res_headers,
+            has_body = has_body,
+            read_body = read_body,
+            trailer_reader = trailer_reader,
+            read_trailers = _read_trailers,
+        }
+    end
+end
 
 function _M.request(self, params)
     local res, err = self:send_request(params)
@@ -721,6 +864,14 @@ function _M.request(self, params)
     end
 end
 
+function _M.request_simple(self, params)
+    local res, err = self:send_request(params)
+    if not res then
+        return res, err
+    else
+        return self:read_response_simple(params)
+    end
+end
 
 function _M.request_pipeline(self, requests)
     for _, params in ipairs(requests) do
@@ -792,7 +943,7 @@ function _M.request_uri(self, uri, params)
         end
     end
 
-    local res, err = self:request(params)
+    local res, err = self:request_simple(params)
     if not res then
         return nil, err
     end
