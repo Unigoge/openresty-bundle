@@ -741,7 +741,12 @@ function _M.read_response(self, params)
 
     -- Receive the body_reader
     if _should_receive_body(params.method, status) then
-        local ok, encoding = pcall(str_lower, res_headers["Transfer-Encoding"])
+        local ok, encoding;
+        if res_headers["Transfer-Encoding"] and type(res_headers["Transfer-Encoding"]) == "string" then
+            ok, encoding = pcall(str_lower, res_headers["Transfer-Encoding"])
+        elseif res_headers["Transfer-Encoding"] and type(res_headers["Transfer-Encoding"]) == "table" then
+            ok, encoding = pcall(str_lower, res_headers["Transfer-Encoding"][1])
+        end
         if ok and version == 1.1 and encoding == "chunked" then
             body_reader, err = _chunked_body_reader(sock)
             has_body = true
