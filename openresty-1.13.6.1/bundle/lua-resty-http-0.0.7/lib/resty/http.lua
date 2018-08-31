@@ -525,7 +525,6 @@ local function _read_body_simple(sock, length)
         else
             -- We have a length and potentially keep-alive, but want everything.
             return socket:receive(content_length);
-
         end    
     end
 end
@@ -839,19 +838,33 @@ function _M.read_response_simple(self, params)
     local read_body = _read_no_body;
     -- Receive the body_reader
     if _should_receive_body(params.method, status) then
-        local ok, encoding = pcall(str_lower, res_headers["Transfer-Encoding"])
-        if ok and version == 1.1 and encoding == "chunked" then
-            read_body = _read_body_chunked(sock);
-            has_body = true
-        else
+        has_body = true
 
-            local ok, length = pcall(tonumber, res_headers["Content-Length"])
-            if ok then
-                read_body = _read_body_simple(sock, length)
-                has_body = true
-            end
+        local te = res_headers["Transfer-Encoding"]
+
+        -- Handle duplicate headers
+        -- This shouldn't happen but can in the real world
+        if type(te) == "table" then
+            te = tbl_concat(te, "")
         end
-    end
+
+        local ok, encoding = pcall(str_lower, te)
+        if not ok then
+            encoding = ""
+        end
+
+        if version == 1.1 and str_find(encoding, "chunked", 1, true) ~= nil then
+            read_body = _read_body_chunked(sock);
+        else
+            local ok, length = pcall(tonumber, res_headers["Content-Length"])
+            if not ok then
+                -- No content-length header, read until connection is closed by server
+                length = nil
+            end
+
+            read_body = _read_body_simple(sock, length)
+        end
+    end    
 
     if res_headers["Trailer"] then
         trailer_reader, err = _trailer_reader(sock)
